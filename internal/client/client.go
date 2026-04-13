@@ -52,8 +52,9 @@ func Run(
 	socksHost,
 	socksUser,
 	socksPass string,
+	clientName string,
 ) error {
-	return RunWithReady(ctx, roomURL, keyHex, socksPort, socksHost, socksUser, socksPass, nil)
+	return RunWithReady(ctx, roomURL, keyHex, socksPort, socksHost, socksUser, socksPass, nil, clientName )
 }
 
 // RunWithReady starts the client and invokes onReady once the local SOCKS5 listener is accepting connections.
@@ -66,6 +67,7 @@ func RunWithReady(
 	socksUser,
 	socksPass string,
 	onReady func(),
+	clientName string,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -94,7 +96,7 @@ func RunWithReady(
 	c.mux = mux.New(c.clientID, c.sendFrame)
 
 	for peerID := range 1 {
-		if err := c.addPeer(runCtx, roomURL, peerID, cancel); err != nil {
+		if err := c.addPeer(runCtx, roomURL, peerID, cancel, clientName); err != nil {
 			return fmt.Errorf("addPeer failed: %w", err)
 		}
 	}
@@ -186,8 +188,13 @@ func (c *Client) addPeer(
 	roomURL string,
 	peerID int,
 	cancel context.CancelFunc,
+	clientName string,
 ) error {
-	peer, err := telemost.NewPeer(runCtx, roomURL, names.Generate(), c.onData)
+	if clientName == ""{
+		clientName = names.Generate()
+	}
+	clientName = clientName + "." + fmt.Sprintf("%d", peerID)
+	peer, err := telemost.NewPeer(runCtx, roomURL, clientName, c.onData)
 	if err != nil {
 		return fmt.Errorf("create peer %d: %w", peerID, err)
 	}
@@ -203,7 +210,7 @@ func (c *Client) addPeer(
 
 	c.peers = append(c.peers, peer)
 
-	log.Printf("Connecting peer %d to Telemost...", peerID)
+	log.Printf("Connecting peer %d (%s) to Telemost...", peerID, clientName)
 	if err := peer.Connect(runCtx); err != nil {
 		return fmt.Errorf("connect peer %d: %w", peerID, err)
 	}

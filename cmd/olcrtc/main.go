@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+	"strings"
 
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
@@ -31,6 +32,7 @@ type config struct {
 	dnsServer      string
 	socksProxyAddr string
 	socksProxyPort int
+	clientName     string
 }
 
 var (
@@ -96,6 +98,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.dnsServer, "dns", "1.1.1.1:53", "DNS server (default: Cloudflare 1.1.1.1)")
 	flag.StringVar(&cfg.socksProxyAddr, "socks-proxy", "", "SOCKS5 proxy address (server only)")
 	flag.IntVar(&cfg.socksProxyPort, "socks-proxy-port", 1080, "SOCKS5 proxy port (server only)")
+	flag.StringVar(&cfg.clientName, "name", "", "name of client")
 	flag.Parse()
 
 	return cfg
@@ -159,6 +162,7 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 			cfg.dnsServer,
 			cfg.socksProxyAddr,
 			cfg.socksProxyPort,
+			cfg.clientName,
 		)
 	case "cnc":
 		errCh <- client.Run(
@@ -169,6 +173,7 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 			cfg.socksHost,
 			"",
 			"",
+			strings.TrimSpace(cfg.clientName),
 		)
 	}
 }

@@ -72,6 +72,7 @@ func Run(
 	dnsServer,
 	socksProxyAddr string,
 	socksProxyPort int,
+	clientName string,
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -99,8 +100,8 @@ func Run(
 	s.setupMux()
 
 	const peerCount = 1
-	for i := range peerCount {
-		if err := s.addPeer(runCtx, roomURL, i, cancel); err != nil {
+	for peerID := range peerCount {
+		if err := s.addPeer(runCtx, roomURL, peerID, cancel, clientName); err != nil {
 			return fmt.Errorf("addPeer failed: %w", err)
 		}
 	}
@@ -182,8 +183,18 @@ func (s *Server) setupMux() {
 	})
 }
 
-func (s *Server) addPeer(ctx context.Context, roomURL string, peerID int, cancel context.CancelFunc) error {
-	peer, err := telemost.NewPeer(ctx, roomURL, names.Generate(), s.onData)
+func (s *Server) addPeer(
+	ctx context.Context,
+	roomURL string,
+	peerID int,
+	cancel context.CancelFunc,
+	clientName string,
+) error {
+	if clientName == ""{
+		clientName = names.Generate()
+	}
+	clientName = clientName + "." + fmt.Sprintf("%d", peerID)
+	peer, err := telemost.NewPeer(ctx, roomURL, clientName, s.onData)
 	if err != nil {
 		return fmt.Errorf("failed to create peer: %w", err)
 	}
@@ -198,7 +209,7 @@ func (s *Server) addPeer(ctx context.Context, roomURL string, peerID int, cancel
 		s.handlePeerReconnect(peerID, dc)
 	})
 
-	log.Printf("Connecting peer %d to Telemost...", peerID)
+	log.Printf("Connecting peer %d (%s) to Telemost...", peerID, clientName)
 	if err := peer.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect peer: %w", err)
 	}
