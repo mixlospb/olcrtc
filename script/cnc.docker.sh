@@ -1,8 +1,4 @@
 #!/bin/bash
-
-echo "ЕСЛИ У ВАС ЕСТЬ ПРОБЛЕМЫ - Я В КУРСЕ, ПРОЕКТ В БЕТЕ, ПО ПРОБЛЕМАМ В ЧАТ t.me/openlibrecommunity ИЛИ ВООБЩЕ НЕКУДА, ЖДИТЕ РЕЛИЗА"
-
-
 set -e
 
 CONTAINER_NAME="olcrtc-client"
@@ -12,27 +8,12 @@ WORK_DIR="/tmp/olcrtc-client"
 
 SOCKS_IP="127.0.0.1"
 SOCKS_PORT="8808"
-BRANCH="main"
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --branch=*)
-            BRANCH="${1#*=}"
-            shift
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-echo "=== OlcRTC Client Deployment Script ==="
-echo ""
-echo "[*] Using branch: $BRANCH"
+echo "=== OlcRTC Client Deployment Script (Docker) ==="
 echo ""
 
-if ! command -v podman &> /dev/null; then
-    echo "[!] Installing Podman..."
+if ! command -v docker &> /dev/null; then
+    echo "[!] Installing Docker..."
 
     if [ "$(id -u)" -eq 0 ]; then
         SUDO=""
@@ -41,30 +22,33 @@ if ! command -v podman &> /dev/null; then
     elif command -v doas &> /dev/null; then
         SUDO="doas"
     else
-        echo "[X] No sudo/doas found and not running as root. Cannot install podman."
+        echo "[X] No sudo/doas found and not running as root. Cannot install docker."
         exit 1
     fi
 
     if command -v apt &> /dev/null; then
         echo "[*] Detected apt (Debian/Ubuntu)"
         $SUDO apt update
-        $SUDO apt install -y podman
+        $SUDO apt install -y docker.io
     elif command -v dnf &> /dev/null; then
         echo "[*] Detected dnf (Fedora/RHEL)"
-        $SUDO dnf install -y podman
+        $SUDO dnf install -y docker
     elif command -v yum &> /dev/null; then
         echo "[*] Detected yum (CentOS/RHEL)"
-        $SUDO yum install -y podman
+        $SUDO yum install -y docker
     elif command -v pacman &> /dev/null; then
         echo "[*] Detected pacman (Arch)"
-        $SUDO pacman -Sy --noconfirm podman
+        $SUDO pacman -Sy --noconfirm docker
     else
-        echo "[X] Unsupported package manager. Install podman manually."
+        echo "[X] Unsupported package manager. Install docker manually."
         exit 1
     fi
+
+    echo "[*] Starting Docker service..."
+    $SUDO systemctl enable --now docker || true
 fi
 
-echo "[+] Using Podman"
+echo "[+] Using Docker"
 echo ""
 echo "Select provider:"
 echo "  1) telemost"
@@ -99,12 +83,10 @@ fi
 
 echo ""
 read -p "Enter Encryption Key (hex): " KEY
-
 if [ -z "$KEY" ]; then
     echo "[X] Encryption key cannot be empty"
     exit 1
 fi
-
 echo ""
 read -p "SOCKS5 ip [default: 127.0.0.1]: " IP_INPUT
 SOCKS_IP=${IP_INPUT:-127.0.0.1}
@@ -115,22 +97,22 @@ SOCKS_PORT=${PORT_INPUT:-8808}
 
 echo ""
 echo "[*] Stopping old instance..."
-podman stop $CONTAINER_NAME 2>/dev/null || true
-podman rm $CONTAINER_NAME 2>/dev/null || true
+docker stop $CONTAINER_NAME 2>/dev/null || true
+docker rm $CONTAINER_NAME 2>/dev/null || true
 
 echo "[*] Cleaning workspace..."
 rm -rf $WORK_DIR
 mkdir -p $WORK_DIR
 
 echo "[*] Cloning repository..."
-git clone --depth 1 --branch "$BRANCH" $REPO_URL $WORK_DIR
+git clone --depth 1 $REPO_URL $WORK_DIR
 
 echo "[*] Pulling Go image..."
-podman pull $IMAGE_NAME
+docker pull $IMAGE_NAME
 
 echo "[*] Building OlcRTC..."
-podman run --rm \
-    -v $WORK_DIR:/app:Z \
+docker run --rm \
+    -v $WORK_DIR:/app \
     -w /app \
     $IMAGE_NAME \
     sh -c "go mod tidy && go build -o olcrtc cmd/olcrtc/main.go"
@@ -141,11 +123,11 @@ if [ ! -f "$WORK_DIR/olcrtc" ]; then
 fi
 
 echo "[*] Starting OlcRTC client..."
-podman run -d \
+docker run -d \
     --name $CONTAINER_NAME \
     --restart unless-stopped \
     -p $SOCKS_IP:$SOCKS_PORT:$SOCKS_PORT \
-    -v $WORK_DIR:/app:Z \
+    -v $WORK_DIR:/app \
     -w /app \
     $IMAGE_NAME \
     ./olcrtc -mode cnc -provider "$PROVIDER" -id "$ROOM_ID" -key "$KEY" -socks-port $SOCKS_PORT -socks-host 0.0.0.0
@@ -161,10 +143,10 @@ echo "Room ID: $ROOM_ID"
 echo "SOCKS5 proxy: $SOCKS_IP:$SOCKS_PORT"
 echo ""
 echo "View logs:"
-echo "  podman logs -f $CONTAINER_NAME"
+echo "  docker logs -f $CONTAINER_NAME"
 echo ""
 echo "Stop client:"
-echo "  podman stop $CONTAINER_NAME"
+echo "  docker stop $CONTAINER_NAME"
 echo ""
 echo "Test proxy:"
 echo "  export all_proxy=socks5h://$SOCKS_IP:$SOCKS_PORT"

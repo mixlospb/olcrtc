@@ -17,6 +17,9 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/client"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/provider"
+	"github.com/openlibrecommunity/olcrtc/internal/provider/jazz"
+	"github.com/openlibrecommunity/olcrtc/internal/provider/telemost"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 )
 
@@ -36,9 +39,10 @@ type config struct {
 }
 
 var (
-	errUnsupportedProvider = errors.New("only telemost provider supported")
 	errRoomIDRequired      = errors.New("room ID required")
 	errModeRequired        = errors.New("specify -mode srv or -mode cnc")
+	errProviderRequired    = errors.New("provider required (use -provider telemost or -provider jazz)")
+	errUnsupportedProvider = errors.New("unsupported provider")
 )
 
 func main() {
@@ -49,6 +53,9 @@ func main() {
 }
 
 func run() error {
+	provider.Register("jazz", jazz.New)
+	provider.Register("telemost", telemost.New)
+
 	cfg := parseFlags()
 	configureLogging(cfg.debug)
 
@@ -88,8 +95,8 @@ func parseFlags() config {
 	cfg := config{}
 
 	flag.StringVar(&cfg.mode, "mode", "", "Mode: srv or cnc")
-	flag.StringVar(&cfg.roomID, "id", "", "Telemost room ID")
-	flag.StringVar(&cfg.provider, "provider", "telemost", "Provider (telemost only)")
+	flag.StringVar(&cfg.roomID, "id", "", "Room ID")
+	flag.StringVar(&cfg.provider, "provider", "telemost", "Provider: telemost or jazz (required)")
 	flag.IntVar(&cfg.socksPort, "socks-port", 1080, "SOCKS5 port (client only)")
 	flag.StringVar(&cfg.socksHost, "socks-host", "127.0.0.1", "SOCKS5 listen host (client only)")
 	flag.StringVar(&cfg.keyHex, "key", "", "Shared encryption key (hex)")
@@ -115,9 +122,20 @@ func configureLogging(debug bool) {
 }
 
 func validateConfig(cfg config) error {
+	available := provider.Available()
+	validProvider := false
+	for _, p := range available {
+		if cfg.provider == p {
+			validProvider = true
+			break
+		}
+	}
+
 	switch {
-	case cfg.provider != "telemost":
-		return errUnsupportedProvider
+	case cfg.provider == "":
+		return errProviderRequired
+	case !validProvider:
+		return fmt.Errorf("%w: %s (available: %v)", errUnsupportedProvider, cfg.provider, available)
 	case cfg.roomID == "":
 		return errRoomIDRequired
 	case cfg.mode != "srv" && cfg.mode != "cnc":
@@ -151,12 +169,13 @@ func loadNames(dataDir string) error {
 }
 
 func runMode(ctx context.Context, cfg config, errCh chan<- error) {
-	roomURL := "https://telemost.yandex.ru/j/" + cfg.roomID
+	roomURL := buildRoomURL(cfg.provider, cfg.roomID)
 
 	switch cfg.mode {
 	case "srv":
 		errCh <- server.Run(
 			ctx,
+			cfg.provider,
 			roomURL,
 			cfg.keyHex,
 			cfg.dnsServer,
@@ -167,6 +186,7 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 	case "cnc":
 		errCh <- client.Run(
 			ctx,
+			cfg.provider,
 			roomURL,
 			cfg.keyHex,
 			cfg.socksPort,
@@ -175,6 +195,20 @@ func runMode(ctx context.Context, cfg config, errCh chan<- error) {
 			"",
 			strings.TrimSpace(cfg.clientName),
 		)
+	}
+}
+
+func buildRoomURL(providerName, roomID string) string {
+	switch providerName {
+	case "telemost":
+		return "https://telemost.yandex.ru/j/" + roomID
+	case "jazz":
+		if roomID == "" {
+			return "any"
+		}
+		return roomID
+	default:
+		return roomID
 	}
 }
 

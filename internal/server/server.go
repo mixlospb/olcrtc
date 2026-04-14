@@ -20,7 +20,7 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/mux"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
-	"github.com/openlibrecommunity/olcrtc/internal/telemost"
+	"github.com/openlibrecommunity/olcrtc/internal/provider"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -41,8 +41,9 @@ var (
 	ErrEncryptFailed = errors.New("encrypt failed")
 )
 
-type Server struct { //nolint:revive
-	peers          []*telemost.Peer
+// Server handles incoming WebRTC connections and proxies their traffic.
+type Server struct {
+	peers          []provider.Provider
 	cipher         *crypto.Cipher
 	mux            *mux.Multiplexer
 	connections    map[uint16]net.Conn
@@ -58,15 +59,17 @@ type Server struct { //nolint:revive
 	socksProxyPort int
 }
 
-type ConnectRequest struct { //nolint:revive
+// ConnectRequest is a message from the client to establish a new connection.
+type ConnectRequest struct {
 	Cmd  string `json:"cmd"`
 	Addr string `json:"addr"`
 	Port int    `json:"port"`
 }
 
-// Run starts the olcrtc server and listens for client connections.
+// Run starts the server with the specified parameters.
 func Run(
 	ctx context.Context,
+	providerName,
 	roomURL,
 	keyHex string,
 	dnsServer,
@@ -86,7 +89,7 @@ func Run(
 		cipher:         cipher,
 		connections:    make(map[uint16]net.Conn),
 		streamPumps:    make(map[uint16]net.Conn),
-		peers:          make([]*telemost.Peer, 0),
+		peers:          make([]provider.Provider, 0),
 		dnsServer:      dnsServer,
 		socksProxyAddr: socksProxyAddr,
 		socksProxyPort: socksProxyPort,
@@ -101,7 +104,7 @@ func Run(
 
 	const peerCount = 1
 	for peerID := range peerCount {
-		if err := s.addPeer(runCtx, roomURL, peerID, cancel, clientName); err != nil {
+		if err := s.addPeer(runCtx, providerName, roomURL, peerID, cancel, clientName); err != nil {
 			return fmt.Errorf("addPeer failed: %w", err)
 		}
 	}
@@ -185,6 +188,7 @@ func (s *Server) setupMux() {
 
 func (s *Server) addPeer(
 	ctx context.Context,
+	providerName,
 	roomURL string,
 	peerID int,
 	cancel context.CancelFunc,
@@ -192,9 +196,17 @@ func (s *Server) addPeer(
 ) error {
 	if clientName == ""{
 		clientName = names.Generate()
-	}
+ 	}
 	clientName = clientName + "." + fmt.Sprintf("%d", peerID)
-	peer, err := telemost.NewPeer(ctx, roomURL, clientName, s.onData)
+	peer, err := provider.New(ctx, providerName, provider.Config{
+		RoomURL:   roomURL,
+		Name:      clientName,
+		OnData:    s.onData,
+		DNSServer: s.dnsServer,
+		ProxyAddr: s.socksProxyAddr,
+		ProxyPort: s.socksProxyPort,
+	})
+
 	if err != nil {
 		return fmt.Errorf("failed to create peer: %w", err)
 	}
@@ -209,7 +221,8 @@ func (s *Server) addPeer(
 		s.handlePeerReconnect(peerID, dc)
 	})
 
-	log.Printf("Connecting peer %d (%s) to Telemost...", peerID, clientName)
+	log.Printf("Connecting peer %d (%s) to %s...", peerID, clientName, providerName)
+
 	if err := peer.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect peer: %w", err)
 	}
@@ -224,11 +237,7 @@ func (s *Server) addPeer(
 }
 
 func (s *Server) handlePeerReconnect(peerID int, dc *webrtc.DataChannel) {
-	if dc == nil {
-		log.Printf("peer %d channel closed", peerID)
-	} else {
-		log.Printf("peer %d reconnected", peerID)
-	}
+	log.Printf("peer %d reconnect event: dc=%v", peerID, dc != nil)
 
 	s.connMu.Lock()
 	for sid, conn := range s.connections {
@@ -251,9 +260,8 @@ func (s *Server) handlePeerReconnect(peerID int, dc *webrtc.DataChannel) {
 			idx := s.peerIdx.Add(1) % uint32(len(s.peers)) //nolint:gosec
 			return s.peers[idx].Send(encrypted)
 		})
+		s.mux.Reset()
 	}
-
-	s.mux.Reset()
 }
 
 func (s *Server) socks5Connect(conn net.Conn, targetAddr string, targetPort int) error {
