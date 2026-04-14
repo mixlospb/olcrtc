@@ -197,7 +197,10 @@ func (p *Peer) Connect(ctx context.Context) error { //nolint:revive
 	}
 
 	var err error
-	p.dc, err = p.pcPub.CreateDataChannel("olcrtc", nil)
+	cName := "olcrtc";
+	log.Printf("CreateDataChannel: %s", cName)
+	p.dc, err = p.pcPub.CreateDataChannel(cName, nil)
+	log.Printf("CreateDataChannel END")
 	if err != nil {
 		return fmt.Errorf("create dc: %w", err)
 	}
